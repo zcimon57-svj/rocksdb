@@ -507,6 +507,16 @@ struct AdvancedColumnFamilyOptions {
   // Dynamically changeable through SetOptions() API
   uint64_t max_compaction_bytes = 0;
 
+  // Maximum number of Level-0 files in a single L0->Lbase compaction.
+  // When L0 accumulates many files, this limits the compaction scope
+  // to prevent OOM and reduce compaction thread occupation time.
+  // Files are selected starting from the oldest, maintaining sequence
+  // number ordering safety.
+  // 0 means no limit (default, original behavior).
+  //
+  // Dynamically changeable through SetOptions() API
+  int level0_max_compaction_file_number = 0;
+
   // All writes will be slowed down to at least delayed_write_rate if estimated
   // bytes needed to be compaction exceed this threshold.
   //

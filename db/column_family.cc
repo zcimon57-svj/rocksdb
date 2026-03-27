@@ -253,6 +253,10 @@ ColumnFamilyOptions SanitizeOptions(const ImmutableDBOptions& db_options,
     result.max_bytes_for_level_multiplier = 1;
   }
 
+  if (result.level0_max_compaction_file_number < 0) {
+    result.level0_max_compaction_file_number = 0;
+  }
+
   if (result.level0_file_num_compaction_trigger == 0) {
     ROCKS_LOG_WARN(db_options.info_log.get(),
                    "level0_file_num_compaction_trigger cannot be 0");

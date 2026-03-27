@@ -275,6 +275,8 @@ class NullCompactionPicker : public CompactionPicker {
 bool FindIntraL0Compaction(const std::vector<FileMetaData*>& level_files,
                            size_t min_files_to_compact,
                            uint64_t max_compact_bytes_per_del_file,
+                           uint64_t max_compaction_bytes,
+                           int level0_max_compaction_file_number,
                            CompactionInputFiles* comp_inputs);
 
 CompressionType GetCompressionType(const ImmutableCFOptions& ioptions,

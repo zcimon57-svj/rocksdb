@@ -42,8 +42,14 @@ uint64_t TotalCompensatedFileSize(const std::vector<FileMetaData*>& files) {
 bool FindIntraL0Compaction(const std::vector<FileMetaData*>& level_files,
                            size_t min_files_to_compact,
                            uint64_t max_compact_bytes_per_del_file,
+                           uint64_t max_compaction_bytes,
+                           int level0_max_compaction_file_number,
                            CompactionInputFiles* comp_inputs) {
+  if (level_files.empty() || comp_inputs == nullptr) {
+    return false;
+  }
   size_t compact_bytes = static_cast<size_t>(level_files[0]->fd.file_size);
+  uint64_t compensated_compact_bytes = level_files[0]->compensated_file_size;
   size_t compact_bytes_per_del_file = port::kMaxSizet;
   // compaction range will be [0, span_len).
   size_t span_len;
@@ -52,17 +58,31 @@ bool FindIntraL0Compaction(const std::vector<FileMetaData*>& level_files,
   size_t new_compact_bytes_per_del_file = 0;
   for (span_len = 1; span_len < level_files.size(); ++span_len) {
     compact_bytes += static_cast<size_t>(level_files[span_len]->fd.file_size);
+    compensated_compact_bytes += level_files[span_len]->compensated_file_size;
     new_compact_bytes_per_del_file = compact_bytes / span_len;
     if (level_files[span_len]->being_compacted ||
         new_compact_bytes_per_del_file > compact_bytes_per_del_file) {
       break;
+    }
+    // Stop if total compensated bytes would exceed max_compaction_bytes.
+    if (compensated_compact_bytes > max_compaction_bytes) {
+      break;
+    }
+    // Respect level0_max_compaction_file_number: stop if including this file
+    // would exceed the allowed maximum. Account for any files already present
+    // in comp_inputs (e.g., from a prior selection stage).
+    if (level0_max_compaction_file_number > 0) {
+      int existing = static_cast<int>(comp_inputs->files.size());
+      if (existing + static_cast<int>(span_len + 1) >
+          level0_max_compaction_file_number) {
+        break;
+      }
     }
     compact_bytes_per_del_file = new_compact_bytes_per_del_file;
   }
 
   if (span_len >= min_files_to_compact &&
       compact_bytes_per_del_file < max_compact_bytes_per_del_file) {
-    assert(comp_inputs != nullptr);
     comp_inputs->level = 0;
     for (size_t i = 0; i < span_len; ++i) {
       comp_inputs->files.push_back(level_files[i]);
@@ -481,7 +501,20 @@ bool CompactionPicker::SetupOtherInputs(
     if (!ExpandInputsToCleanCut(cf_name, vstorage, &expanded_inputs)) {
       try_overlapping_inputs = false;
     }
-    if (try_overlapping_inputs && expanded_inputs.size() > inputs->size() &&
+    // When level0_max_compaction_file_number is active and L0 inputs have
+    // already been truncated to that limit, do not expand L0 inputs back.
+    //
+    // NOTE: The truncation condition in SetupOtherL0FilesIfNeeded uses ">"
+    // (only truncate when size exceeds limit), so after truncation
+    // inputs->size() == l0_file_limit. This guard must use ">=" to detect
+    // the post-truncation state. Using ">" here would miss it and allow
+    // SetupOtherInputs to re-expand L0 back to the pre-truncation count.
+    int l0_file_limit = mutable_cf_options.level0_max_compaction_file_number;
+    bool l0_truncated = (input_level == 0 && l0_file_limit > 0 &&
+                         static_cast<int>(inputs->size()) >= l0_file_limit);
+
+    if (try_overlapping_inputs && !l0_truncated &&
+        expanded_inputs.size() > inputs->size() &&
         output_level_inputs_size + expanded_inputs_size < limit &&
         !AreFilesInCompaction(expanded_inputs.files)) {
       InternalKey new_start, new_limit;
@@ -499,7 +532,7 @@ bool CompactionPicker::SetupOtherInputs(
         expand_inputs = true;
       }
     }
-    if (!expand_inputs) {
+    if (!expand_inputs && !l0_truncated) {
       vstorage->GetCleanInputsWithinInterval(input_level, &all_start,
                                              &all_limit, &expanded_inputs.files,
                                              base_index, nullptr);
@@ -1296,8 +1329,92 @@ void LevelCompactionBuilder::SetupInitialFiles() {
 
 bool LevelCompactionBuilder::SetupOtherL0FilesIfNeeded() {
   if (start_level_ == 0 && output_level_ != 0) {
-    return compaction_picker_->GetOverlappingL0Files(
-        vstorage_, &start_level_inputs_, output_level_, &parent_index_);
+    if (!compaction_picker_->GetOverlappingL0Files(
+            vstorage_, &start_level_inputs_, output_level_, &parent_index_)) {
+      return false;
+    }
+    // Apply level0_max_compaction_file_number limit if set.
+    // Truncate the seed overlap set returned by GetOverlappingL0Files,
+    // keeping the oldest files (at the tail of the newest-first sorted list).
+    // This is safe because:
+    // - The dropped newer files remain in L0 and will be read first (L0 is
+    //   queried newest-first), so sequence ordering is preserved.
+    // - The remaining older files form a valid subset for compaction.
+    const int limit = mutable_cf_options_.level0_max_compaction_file_number;
+    if (limit > 0 &&
+        static_cast<int>(start_level_inputs_.files.size()) > limit) {
+      auto& files = start_level_inputs_.files;
+      const int total = static_cast<int>(files.size());
+
+      // Log the raw order returned by GetOverlappingInputs for observability.
+      // GetOverlappingInputs may return files in non-newest-first order when
+      // chain expansion pulls in a newer file during a later pass.
+      for (size_t i = 0; i < files.size(); i++) {
+        ROCKS_LOG_BUFFER(
+            log_buffer_,
+            "[%s] L0 pre-sort[%" ROCKSDB_PRIszt "/%d]: #%" PRIu64
+            " seq=[%" PRIu64 ",%" PRIu64 "] size=%" PRIu64,
+            cf_name_.c_str(), i, total - 1, files[i]->fd.GetNumber(),
+            files[i]->fd.smallest_seqno, files[i]->fd.largest_seqno,
+            files[i]->fd.GetFileSize());
+      }
+
+      // Sort newest-first by sequence number before truncation.
+      // GetOverlappingInputs for L0 uses a multi-pass iterative algorithm
+      // with expand_range=true. When chain expansion pulls in a newer file
+      // (lower index in files_[0]) during a later pass, that file appears
+      // after older files in the output, violating newest-first order.
+      // Example: seed=file1[a,m]; file3[p,z] skipped in pass 1 (p>m);
+      // file2[g,t] added in pass 1 and expands range to [a,t]; file3 added
+      // in pass 2 after file2 and file1. Output: [file2, file1, file3].
+      // Without sorting, erase(front) would discard file2 and keep
+      // [file1, file3], sending the newest file3 to Lbase while the
+      // middle-aged file2 stays in L0, causing stale reads on shared keys.
+      std::sort(files.begin(), files.end(),
+                [](const FileMetaData* f1, const FileMetaData* f2) {
+                  return f1->fd.largest_seqno > f2->fd.largest_seqno;
+                });
+
+      // Now files is in newest-first order. Keep only the oldest `limit`
+      // files (the tail of the vector).
+      const int start_pos = total - limit;
+      files.erase(files.begin(), files.begin() + start_pos);
+
+      // The stale parent_index_ was derived from the full pre-truncation L0
+      // range. After truncation the search range shrinks; passing this stale
+      // hint to GetOverlappingInputs would skip the binary search and assert
+      // on a file whose smallest key exceeds the new range end. Force a fresh
+      // binary search by resetting to -1.
+      parent_index_ = -1;
+
+      ROCKS_LOG_BUFFER(log_buffer_,
+                       "[%s] L0 compaction truncated to %d files "
+                       "(limit %d, was %d)",
+                       cf_name_.c_str(), static_cast<int>(files.size()), limit,
+                       total);
+
+      // Log the final selected files (oldest `limit`) after sort+truncation.
+      for (size_t i = 0; i < files.size(); i++) {
+        ROCKS_LOG_BUFFER(
+            log_buffer_,
+            "[%s] L0 post-truncate[%" ROCKSDB_PRIszt "/%d]: #%" PRIu64
+            " seq=[%" PRIu64 ",%" PRIu64 "] size=%" PRIu64,
+            cf_name_.c_str(), i, static_cast<int>(files.size()) - 1,
+            files[i]->fd.GetNumber(), files[i]->fd.smallest_seqno,
+            files[i]->fd.largest_seqno, files[i]->fd.GetFileSize());
+      }
+
+      // Re-check range conflict with output level.
+      InternalKey new_smallest, new_largest;
+      compaction_picker_->GetRange(start_level_inputs_, &new_smallest,
+                                   &new_largest);
+      if (compaction_picker_->IsRangeInCompaction(
+              vstorage_, &new_smallest, &new_largest, output_level_,
+              &parent_index_)) {
+        return false;
+      }
+    }
+    return true;
   }
   return true;
 }
@@ -1535,8 +1652,11 @@ bool LevelCompactionBuilder::PickIntraL0Compaction() {
     // resort to L0->L0 compaction yet.
     return false;
   }
-  return FindIntraL0Compaction(level_files, kMinFilesForIntraL0Compaction,
-                               port::kMaxUint64, &start_level_inputs_);
+  return FindIntraL0Compaction(
+      level_files, kMinFilesForIntraL0Compaction, port::kMaxUint64,
+      mutable_cf_options_.max_compaction_bytes,
+      mutable_cf_options_.level0_max_compaction_file_number,
+      &start_level_inputs_);
 }
 }  // namespace
 
