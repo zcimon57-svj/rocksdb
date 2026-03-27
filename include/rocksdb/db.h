@@ -848,6 +848,26 @@ class DB {
                         output_file_names);
   }
 
+  // CompactLevel() compacts all files from the specified input levels into the
+  // given output level. It collects all SST file names from the input levels
+  // and internally delegates to CompactFiles(). Compaction options (compression,
+  // file size, etc.) are automatically derived from the column family's current
+  // MutableCFOptions.
+  //
+  // @param column_family  the column family to compact
+  // @param input_levels   list of levels whose files will be compacted;
+  //                       must be non-empty, each level in [0, num_levels)
+  // @param output_level   the target level for compaction output;
+  //                       must be >= max(input_levels) and < num_levels
+  virtual Status CompactLevel(ColumnFamilyHandle* column_family,
+                              const std::vector<int>& input_levels,
+                              int output_level) = 0;
+
+  virtual Status CompactLevel(const std::vector<int>& input_levels,
+                              int output_level) {
+    return CompactLevel(DefaultColumnFamily(), input_levels, output_level);
+  }
+
   // This function will wait until all currently running background processes
   // finish. After it returns, no background process will be run until
   // ContinueBackgroundWork is called

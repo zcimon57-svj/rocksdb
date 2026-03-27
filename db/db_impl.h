@@ -199,6 +199,11 @@ class DBImpl : public DB {
                               std::vector<std::string>* const output_file_names
                               = nullptr) override;
 
+  using DB::CompactLevel;
+  virtual Status CompactLevel(ColumnFamilyHandle* column_family,
+                              const std::vector<int>& input_levels,
+                              int output_level) override;
+
   virtual Status PauseBackgroundWork() override;
   virtual Status ContinueBackgroundWork() override;
 

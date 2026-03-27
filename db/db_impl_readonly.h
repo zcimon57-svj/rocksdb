@@ -82,6 +82,14 @@ class DBImplReadOnly : public DBImpl {
     return Status::NotSupported("Not supported operation in read only mode.");
   }
 
+  using DB::CompactLevel;
+  virtual Status CompactLevel(
+      ColumnFamilyHandle* /*column_family*/,
+      const std::vector<int>& /*input_levels*/,
+      int /*output_level*/) override {
+    return Status::NotSupported("Not supported operation in read only mode.");
+  }
+
   virtual Status DisableFileDeletions() override {
     return Status::NotSupported("Not supported operation in read only mode.");
   }

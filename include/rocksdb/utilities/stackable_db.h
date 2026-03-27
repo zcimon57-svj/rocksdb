@@ -226,6 +226,13 @@ class StackableDB : public DB {
         output_level, output_path_id, output_file_names);
   }
 
+  using DB::CompactLevel;
+  virtual Status CompactLevel(ColumnFamilyHandle* column_family,
+                              const std::vector<int>& input_levels,
+                              int output_level) override {
+    return db_->CompactLevel(column_family, input_levels, output_level);
+  }
+
   virtual Status PauseBackgroundWork() override {
     return db_->PauseBackgroundWork();
   }

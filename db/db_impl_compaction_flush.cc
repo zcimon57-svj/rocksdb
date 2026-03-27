@@ -21,6 +21,7 @@
 #include "monitoring/thread_status_updater.h"
 #include "monitoring/thread_status_util.h"
 #include "util/sst_file_manager_impl.h"
+#include "util/string_util.h"
 #include "util/sync_point.h"
 
 namespace rocksdb {
@@ -748,6 +749,75 @@ Status DBImpl::CompactRange(const CompactRangeOptions& options,
   }
 
   return s;
+}
+
+Status DBImpl::CompactLevel(ColumnFamilyHandle* column_family,
+                            const std::vector<int>& input_levels,
+                            int output_level) {
+  if (column_family == nullptr) {
+    return Status::InvalidArgument("ColumnFamilyHandle must be non-null.");
+  }
+  if (input_levels.empty()) {
+    return Status::InvalidArgument("input_levels must be non-empty.");
+  }
+
+  auto cfd = reinterpret_cast<ColumnFamilyHandleImpl*>(column_family)->cfd();
+  const int num_levels = cfd->NumberLevels();
+
+  // Validate levels.
+  int max_input_level = 0;
+  for (int lvl : input_levels) {
+    if (lvl < 0 || lvl >= num_levels) {
+      return Status::InvalidArgument(
+          "input level " + ToString(lvl) + " out of range [0, " +
+          ToString(num_levels - 1) + "].");
+    }
+    max_input_level = std::max(max_input_level, lvl);
+  }
+  if (output_level < 0 || output_level >= num_levels) {
+    return Status::InvalidArgument(
+        "output_level " + ToString(output_level) + " out of range [0, " +
+        ToString(num_levels - 1) + "].");
+  }
+  if (output_level < max_input_level) {
+    return Status::InvalidArgument(
+        "output_level (" + ToString(output_level) +
+        ") must be >= max input level (" + ToString(max_input_level) + ").");
+  }
+
+  // Collect input file names from the specified levels.
+  std::set<int> input_level_set(input_levels.begin(), input_levels.end());
+  ColumnFamilyMetaData cf_meta;
+  GetColumnFamilyMetaData(column_family, &cf_meta);
+
+  std::vector<std::string> input_file_names;
+  for (const auto& level_meta : cf_meta.levels) {
+    if (input_level_set.count(level_meta.level)) {
+      for (const auto& file_meta : level_meta.files) {
+        input_file_names.push_back(file_meta.name);
+      }
+    }
+  }
+  if (input_file_names.empty()) {
+    // No files in the specified input levels -- nothing to do.
+    return Status::OK();
+  }
+
+  // Build CompactionOptions from current CF options.
+  CompactionOptions compact_options;
+  const auto* ioptions = cfd->ioptions();
+  if (!ioptions->compression_per_level.empty() &&
+      output_level < static_cast<int>(ioptions->compression_per_level.size())) {
+    compact_options.compression = ioptions->compression_per_level[output_level];
+  } else {
+    compact_options.compression = cfd->GetLatestMutableCFOptions()->compression;
+  }
+  compact_options.output_file_size_limit =
+      cfd->GetLatestMutableCFOptions()->target_file_size_base;
+  compact_options.max_subcompactions = 0;  // use db default
+
+  return CompactFiles(compact_options, column_family, input_file_names,
+                      output_level);
 }
 
 Status DBImpl::CompactFiles(const CompactionOptions& compact_options,
