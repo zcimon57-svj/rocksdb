@@ -136,3 +136,58 @@ based stopping criterion for non-uniform file sizes.
 - **Ln seq ranges**: `smallest_seq=2, largest_seq=15` (old compacted data)
 - **Seed determinism**: files expected as seeds use larger `file_size` to rank
   first in `FilesByCompactionPri[0]` (`kByCompensatedSize`)
+
+### Stress Test: `L0MaxCompactionFileNumberStress` (`db/db_compaction_test.cc`)
+
+Integration test that verifies both L0→Lbase and intra-L0 paths under sustained
+concurrent Merge workload with `dynamic_level_bytes=true`.
+
+**What it does:**
+
+- 4 writer threads continuously issue `Merge()` on a 100-key space (maximizes L0 overlap).
+- `EventListener::OnCompactionBegin` captures L0 file count before each compaction pick.
+- `EventListener::OnCompactionCompleted` verifies L0 picked files <= limit.
+- Periodic (every 10s) level stats printed for observability.
+- Final summary reports L0→Lbase / intra-L0 counts, max L0 before pick, truncation count.
+
+**Key assertions:**
+
+- `violations == 0`: no compaction ever picked more L0 files than the limit.
+- `max_l0_before > limit`: L0 did accumulate beyond the limit (truncation was needed).
+- `truncation_count > 0`: truncation actually fired.
+
+**How to run:**
+
+```bash
+# Build (use DISABLE_WARNING_AS_ERROR=1 for older compilers)
+DISABLE_WARNING_AS_ERROR=1 make -j$(nproc) db_compaction_test
+
+# Quick validation (30 seconds)
+TEST_DURATION_SEC=30 ./db_compaction_test --gtest_filter="DBCompactionTest.L0MaxCompactionFileNumberStress"
+
+# Full run (10 minutes, default)
+./db_compaction_test --gtest_filter="DBCompactionTest.L0MaxCompactionFileNumberStress"
+
+# Custom duration
+TEST_DURATION_SEC=300 ./db_compaction_test --gtest_filter="DBCompactionTest.L0MaxCompactionFileNumberStress"
+```
+
+**Sample output:**
+
+```
+[COMPACTION] L0->Lbase: L0_before_pick=13, L0_picked=5, Ln_input=52, output_level=5, output=71
+[COMPACTION] IntraL0: L0_before_pick=20, L0_picked=4, Ln_input=0, output_level=0, output=1
+
+=== [T+30s] Level Stats ===
+Level Files Size(MB)
+...
+  L0->Lbase: 145 (max_L0_picked=5), IntraL0: 105 (max_L0_picked=5), max_L0_before_pick=20, truncations=107, violations: 0
+
+=== Final Results ===
+  L0->Lbase compactions: 149 (max L0 picked: 5)
+  IntraL0 compactions:   105 (max L0 picked: 5)
+  Max L0 files before pick: 20
+  Truncations (L0_before > limit): 110
+  Limit: 5
+  Violations: 0
+```

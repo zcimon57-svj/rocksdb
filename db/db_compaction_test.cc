@@ -4148,6 +4148,247 @@ TEST_P(DBCompactionTestWithParam, FixFileIngestionCompactionDeadlock) {
   Close();
 }
 
+// Sustained-write stress test for level0_max_compaction_file_number.
+// Verifies that every L0-involved compaction (both L0->Lbase and intra-L0)
+// respects the file count limit under continuous Merge workload with
+// dynamic_level_bytes=true.
+// Default duration: 10 minutes. Override via env var TEST_DURATION_SEC.
+TEST_F(DBCompactionTest, L0MaxCompactionFileNumberStress) {
+  class L0CompactionListener : public EventListener {
+   public:
+    explicit L0CompactionListener(int limit) : limit_(limit) {}
+
+    void OnCompactionBegin(DB* db, const CompactionJobInfo& ci) override {
+      if (ci.base_input_level != 0) return;
+      // Capture L0 file count at pick time (before compaction runs).
+      std::string val;
+      int l0_total = 0;
+      if (db->GetProperty(DB::Properties::kNumFilesAtLevelPrefix + "0",
+                          &val)) {
+        l0_total = std::atoi(val.c_str());
+      }
+      std::lock_guard<std::mutex> lock(mutex_);
+      begin_l0_counts_[ci.job_id] = l0_total;
+    }
+
+    void OnCompactionCompleted(DB* /*db*/,
+                               const CompactionJobInfo& ci) override {
+      if (ci.base_input_level != 0) return;
+      bool is_intra_l0 = (ci.output_level == 0);
+      // For intra-L0: output_level == base_input_level == 0, so
+      // num_input_files_at_output_level == num_input_files. All inputs are L0.
+      // For L0->Lbase: L0 files = total inputs - Lbase inputs.
+      size_t l0_picked = is_intra_l0
+          ? ci.stats.num_input_files
+          : ci.stats.num_input_files - ci.stats.num_input_files_at_output_level;
+      size_t ln_files = is_intra_l0
+          ? 0
+          : ci.stats.num_input_files_at_output_level;
+
+      std::lock_guard<std::mutex> lock(mutex_);
+
+      // Retrieve L0 file count captured at OnCompactionBegin.
+      int l0_before = -1;
+      auto it = begin_l0_counts_.find(ci.job_id);
+      if (it != begin_l0_counts_.end()) {
+        l0_before = it->second;
+        begin_l0_counts_.erase(it);
+      }
+
+      if (is_intra_l0) {
+        intra_l0_compactions_++;
+        max_intra_l0_files_ =
+            std::max(max_intra_l0_files_, static_cast<int>(l0_picked));
+      } else {
+        l0_to_base_compactions_++;
+        max_l0_to_base_files_ =
+            std::max(max_l0_to_base_files_, static_cast<int>(l0_picked));
+      }
+      max_l0_before_ = std::max(max_l0_before_, l0_before);
+      truncation_count_ += (l0_before > limit_ && limit_ > 0) ? 1 : 0;
+
+      // Log every compaction with L0 file count before pick.
+      fprintf(stderr,
+              "[COMPACTION] %s: L0_before_pick=%d, L0_picked=%zu, "
+              "Ln_input=%zu, output_level=%d, output=%zu\n",
+              is_intra_l0 ? "IntraL0" : "L0->Lbase",
+              l0_before, l0_picked, ln_files,
+              ci.output_level, ci.output_files.size());
+
+      if (limit_ > 0 && static_cast<int>(l0_picked) > limit_) {
+        violations_++;
+        fprintf(stderr,
+                "*** VIOLATION: %s picked %zu L0 files (limit=%d)\n",
+                is_intra_l0 ? "IntraL0" : "L0->Lbase",
+                l0_picked, limit_);
+      }
+    }
+
+    int l0_to_base_compactions() {
+      std::lock_guard<std::mutex> lock(mutex_);
+      return l0_to_base_compactions_;
+    }
+    int intra_l0_compactions() {
+      std::lock_guard<std::mutex> lock(mutex_);
+      return intra_l0_compactions_;
+    }
+    int max_l0_to_base_files() {
+      std::lock_guard<std::mutex> lock(mutex_);
+      return max_l0_to_base_files_;
+    }
+    int max_intra_l0_files() {
+      std::lock_guard<std::mutex> lock(mutex_);
+      return max_intra_l0_files_;
+    }
+    int max_l0_before() {
+      std::lock_guard<std::mutex> lock(mutex_);
+      return max_l0_before_;
+    }
+    int truncation_count() {
+      std::lock_guard<std::mutex> lock(mutex_);
+      return truncation_count_;
+    }
+    int violations() {
+      std::lock_guard<std::mutex> lock(mutex_);
+      return violations_;
+    }
+
+   private:
+    const int limit_;
+    std::mutex mutex_;
+    std::unordered_map<int, int> begin_l0_counts_;  // job_id -> L0 file count
+    int l0_to_base_compactions_ = 0;
+    int intra_l0_compactions_ = 0;
+    int max_l0_to_base_files_ = 0;
+    int max_intra_l0_files_ = 0;
+    int max_l0_before_ = 0;
+    int truncation_count_ = 0;
+    int violations_ = 0;
+  };
+
+  const int kL0Limit = 5;
+  const int kNumWriteThreads = 4;
+  const int kValueSize = 1024;
+  // Print level stats every this many seconds.
+  const int kStatsPrintIntervalSec = 10;
+
+  // Default 10 minutes; override with TEST_DURATION_SEC env var.
+  int duration_sec = 600;
+  const char* env_duration = std::getenv("TEST_DURATION_SEC");
+  if (env_duration) {
+    duration_sec = std::atoi(env_duration);
+    if (duration_sec <= 0) duration_sec = 600;
+  }
+
+  Options options = CurrentOptions();
+  options.create_if_missing = true;
+  options.compaction_style = kCompactionStyleLevel;
+  options.num_levels = 7;
+  options.level_compaction_dynamic_level_bytes = true;
+  options.write_buffer_size = 4 * 1024 * 1024;       // 4MB memtable
+  options.target_file_size_base = 4 * 1024 * 1024;
+  options.max_bytes_for_level_base = 16 * 1024 * 1024;
+  options.max_bytes_for_level_multiplier = 10;
+  options.level0_file_num_compaction_trigger = 4;
+  options.level0_max_compaction_file_number = kL0Limit;
+  options.max_compaction_bytes = 64 * 1024 * 1024;
+  // Use 2 compaction threads to increase the chance of intra-L0:
+  // when L0->Lbase occupies one thread and L0 keeps accumulating,
+  // the second thread can pick intra-L0 compaction.
+  options.max_background_compactions = 2;
+  options.max_background_flushes = 2;
+  options.compression = kNoCompression;
+  options.merge_operator.reset(new NoopMergeOperator());
+
+  auto* listener = new L0CompactionListener(kL0Limit);
+  options.listeners.emplace_back(listener);
+
+  DestroyAndReopen(options);
+
+  // Write with multiple threads using Merge to create overlapping L0 files.
+  // Small key space (100 keys) ensures heavy overlap between L0 files and
+  // between L0 and Ln, which is the scenario that triggers large overlap
+  // closures and exercises the truncation logic.
+  std::atomic<bool> stop{false};
+  std::atomic<int> total_merges{0};
+  std::vector<port::Thread> threads;
+  for (int t = 0; t < kNumWriteThreads; t++) {
+    threads.emplace_back([&, t]() {
+      Random rnd(301 + t);
+      int count = 0;
+      while (!stop.load(std::memory_order_relaxed)) {
+        std::string key = "key" + std::to_string(rnd.Uniform(100));
+        std::string value = RandomString(&rnd, kValueSize);
+        Status s = db_->Merge(WriteOptions(), key, value);
+        if (!s.ok()) {
+          Env::Default()->SleepForMicroseconds(1000);
+          continue;
+        }
+        count++;
+      }
+      total_merges.fetch_add(count, std::memory_order_relaxed);
+    });
+  }
+
+  // Periodically print level stats for observability.
+  int elapsed = 0;
+  while (elapsed < duration_sec) {
+    int sleep_sec = std::min(kStatsPrintIntervalSec, duration_sec - elapsed);
+    Env::Default()->SleepForMicroseconds(
+        static_cast<uint64_t>(sleep_sec) * 1000000ULL);
+    elapsed += sleep_sec;
+
+    std::string level_stats;
+    db_->GetProperty(DB::Properties::kLevelStats, &level_stats);
+    fprintf(stderr,
+            "\n=== [T+%ds] Level Stats ===\n%s"
+            "  L0->Lbase: %d (max_L0_picked=%d), "
+            "IntraL0: %d (max_L0_picked=%d), "
+            "max_L0_before_pick=%d, truncations=%d, "
+            "violations: %d\n",
+            elapsed, level_stats.c_str(),
+            listener->l0_to_base_compactions(),
+            listener->max_l0_to_base_files(),
+            listener->intra_l0_compactions(),
+            listener->max_intra_l0_files(),
+            listener->max_l0_before(),
+            listener->truncation_count(),
+            listener->violations());
+  }
+
+  stop.store(true, std::memory_order_relaxed);
+  for (auto& t : threads) {
+    t.join();
+  }
+  dbfull()->TEST_WaitForCompact();
+
+  fprintf(stderr,
+          "\n=== Final Results ===\n"
+          "  Duration: %d seconds\n"
+          "  Total merges: %d\n"
+          "  L0->Lbase compactions: %d (max L0 picked: %d)\n"
+          "  IntraL0 compactions:   %d (max L0 picked: %d)\n"
+          "  Max L0 files before pick: %d\n"
+          "  Truncations (L0_before > limit): %d\n"
+          "  Limit: %d\n"
+          "  Violations: %d\n",
+          duration_sec, total_merges.load(),
+          listener->l0_to_base_compactions(),
+          listener->max_l0_to_base_files(),
+          listener->intra_l0_compactions(),
+          listener->max_intra_l0_files(),
+          listener->max_l0_before(),
+          listener->truncation_count(),
+          kL0Limit, listener->violations());
+
+  ASSERT_EQ(0, listener->violations());
+  ASSERT_GT(listener->l0_to_base_compactions(), 0);
+  // Verify truncation actually happened: L0 must have accumulated beyond the
+  // limit at least once, proving the limit was actively enforced.
+  ASSERT_GT(listener->max_l0_before(), kL0Limit);
+  ASSERT_GT(listener->truncation_count(), 0);
+}
+
 #endif // !defined(ROCKSDB_LITE)
 }  // namespace rocksdb
 

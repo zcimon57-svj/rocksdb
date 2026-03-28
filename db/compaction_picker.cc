@@ -61,22 +61,11 @@ bool FindIntraL0Compaction(const std::vector<FileMetaData*>& level_files,
     compensated_compact_bytes += level_files[span_len]->compensated_file_size;
     new_compact_bytes_per_del_file = compact_bytes / span_len;
     if (level_files[span_len]->being_compacted ||
-        new_compact_bytes_per_del_file > compact_bytes_per_del_file) {
+        new_compact_bytes_per_del_file > compact_bytes_per_del_file ||
+        compensated_compact_bytes > max_compaction_bytes ||
+        (level0_max_compaction_file_number > 0 &&
+         static_cast<int>(span_len + 1) > level0_max_compaction_file_number)) {
       break;
-    }
-    // Stop if total compensated bytes would exceed max_compaction_bytes.
-    if (compensated_compact_bytes > max_compaction_bytes) {
-      break;
-    }
-    // Respect level0_max_compaction_file_number: stop if including this file
-    // would exceed the allowed maximum. Account for any files already present
-    // in comp_inputs (e.g., from a prior selection stage).
-    if (level0_max_compaction_file_number > 0) {
-      int existing = static_cast<int>(comp_inputs->files.size());
-      if (existing + static_cast<int>(span_len + 1) >
-          level0_max_compaction_file_number) {
-        break;
-      }
     }
     compact_bytes_per_del_file = new_compact_bytes_per_del_file;
   }
