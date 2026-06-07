@@ -1,0 +1,27 @@
+{
+  "schema_version": "plugin-manifest/v1",
+  "name": "rocksdb-review",
+  "agentcentor_skill": "rocksdb-review",
+  "version": "3.0.10",
+  "client": "claudecode",
+  "owner": "db-ai-skill-owner",
+  "main_tag": "dev",
+  "source_path": "dev/taurus/rocksdb-review",
+  "description": "RocksDB-focused review guidance for validation of required skill package flows.",
+  "skills": [
+    {
+      "name": "rocksdb-review",
+      "path": "skills/rocksdb-review/SKILL.md",
+      "required": true,
+      "tags": ["dev", "rocksdb", "review"]
+    }
+  ],
+  "activation": {
+    "type": "activation_yml",
+    "path": "activation.yml",
+    "reload_skills_hint": true
+  },
+  "install_entry": "install-entry.md",
+  "tags": ["dev", "rocksdb", "review"],
+  "migration_notes": "External validation package source. Internal agentcentor and CodeHub adapters should preserve agentcentor_skill, version, client, source_path, activation.path, install_entry, and skills[].path."
+}

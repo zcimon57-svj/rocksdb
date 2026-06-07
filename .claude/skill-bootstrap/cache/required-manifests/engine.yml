@@ -1,0 +1,18 @@
+schema_version: required-manifest/v1
+scope: engine
+scope_name: taurus
+plugins:
+  - skill_ref: dev/taurus/rocksdb-review
+    agentcentor_skill: rocksdb-review
+    version: 3.0.10
+    source: mock-agentcentor
+    source_path: dev/taurus/rocksdb-review
+    client: claudecode
+    required_scope: engine:taurus
+    main_tag: dev
+    status: active
+    owner: cimon
+    approver: db-ai-skill-owner
+    review_date: "2026-07-01"
+    activation_required: true
+    exit_condition: "Remove from required only after replacement or failed adoption review."

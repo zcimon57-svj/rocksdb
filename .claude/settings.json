@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/skill-bootstrap/sync_skill_plugins.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

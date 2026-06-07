@@ -1,0 +1,27 @@
+{
+  "schema_version": "install-report/v1",
+  "run_id": "rocksdb-bootstrap-1780744419697-f6ca20",
+  "generated_at": "2026-06-06T11:13:39.713Z",
+  "status": "cached",
+  "blocking_errors": [],
+  "warnings": [],
+  "command_template_id": "skill_install_command_template",
+  "rendered_command": "npx @aimarket/agentcenter skill add rocksdb-review@3.0.10 --client claudecode --package-store /home/cimon/code/skill-management-validation-repos/Mock-DBS-Skill/package-store/mock-file-store",
+  "exit_code": 0,
+  "agentcentor_skill": "rocksdb-review",
+  "version": "3.0.10",
+  "artifact_hash": "sha256:bc9735065d60fb2147b443efa96dc1cdd608f92c55fc6c9fa9973a22f3e132a6",
+  "installed_files": [
+    ".claude/plugins/rocksdb-review/.claude-plugin/plugin.json",
+    ".claude/plugins/rocksdb-review/activation.yml",
+    ".claude/plugins/rocksdb-review/install-entry.md",
+    ".claude/plugins/rocksdb-review/skills/rocksdb-review/SKILL.md"
+  ],
+  "validation": {
+    "contains_manifest": true,
+    "contains_skill": true,
+    "contains_activation_or_hook": true,
+    "install_entry_present": true
+  },
+  "used_cache": true
+}

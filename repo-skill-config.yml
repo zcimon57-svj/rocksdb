@@ -1,0 +1,62 @@
+schema_version: repo-skill-config/v1
+repo: rocksdb
+engine: taurus
+agentcentor:
+  npm_scope: "@aimarket"
+  registry: "file:///home/cimon/code/skill-management-validation-repos/Mock-DBS-Skill/package-store/mock-file-store"
+  registry_config_key: "@aimarket:registry"
+  cli_package: "@aimarket/agentcenter"
+  package_store:
+    kind: mock-file-store
+    reference: "/home/cimon/code/skill-management-validation-repos/Mock-DBS-Skill/package-store/mock-file-store"
+    used_by: install
+  bootstrap_market_command: "npm config set @aimarket:registry={registry} strict-ssl=false"
+  skill_install_command_template: "npx {cli_package} skill add {agentcentor_skill}@{version} --client {client} --package-store {package_store}"
+  skill_info_command_template: "npx {cli_package} skill info {agentcentor_skill}@{version} --client {client} --package-store {package_store}"
+  list_command_template: "npx {cli_package} skill list --client {client} --package-store {package_store}"
+  client: claudecode
+required_manifests:
+  department: "/home/cimon/code/skill-management-validation-repos/Mock-DBS-Skill/required/department.yml"
+  engine: "/home/cimon/code/skill-management-validation-repos/Mock-DBS-Skill/required/engine/taurus.yml"
+  repo: "/home/cimon/code/skill-management-validation-repos/Mock-DBS-Skill/required/repo/rocksdb.yml"
+  access_mode: anonymous
+  timeout_seconds: 3
+paths:
+  repo_root: "."
+  install_root: ".claude/plugins"
+  skills_dir: ".claude/skills"
+  plugin_dir: ".claude/plugins"
+  manifest: ".claude/skill-bootstrap/state/installed-plugins.json"
+  session_context: ".claude/skill-bootstrap/session-context.json"
+  cache_dir: ".claude/skill-bootstrap/cache"
+  effective_required: ".claude/skill-bootstrap/cache/effective_required.json"
+  install_report: ".claude/skill-bootstrap/reports/install_report.json"
+  validation_roots:
+    - name: plugin_manifest
+      path: ".claude/plugins/rocksdb-review/.claude-plugin/plugin.json"
+      required: true
+      expected: file
+    - name: skill_content
+      path: ".claude/plugins/rocksdb-review/skills/rocksdb-review/SKILL.md"
+      required: true
+      expected: file
+    - name: activation
+      path: ".claude/plugins/rocksdb-review/activation.yml"
+      required: true
+      expected: file
+    - name: install_entry
+      path: ".claude/plugins/rocksdb-review/install-entry.md"
+      required: true
+      expected: file
+  managed_manifest: ".claude/skill-bootstrap/state/installed-plugins.json"
+policy:
+  allow_global_install: false
+  force_overwrite: false
+  configure_market_if_missing: true
+  required_main_tag: dev
+  fail_open: true
+  install_timeout_seconds: 10
+  required_fetch_timeout_seconds: 3
+  host_mapping_only_on_dns_failure: true
+  dns_preflight: warn_only
+  unknown_placeholder_policy: reject_unknown

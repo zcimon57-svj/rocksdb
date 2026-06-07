@@ -1,0 +1,9 @@
+schema_version: activation/v1
+plugin: rocksdb-review
+agentcentor_skill: rocksdb-review
+version: 3.0.10
+skills:
+  - name: rocksdb-review
+    use_when: "Reviewing RocksDB code, tests, configuration, or migration work where storage-engine behavior matters."
+    do_not_use_when: "The task is unrelated to RocksDB or storage-engine development."
+    context_hint: "Apply RocksDB-specific review checks for correctness, compatibility, and validation evidence."

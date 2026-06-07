@@ -1,0 +1,4 @@
+schema_version: required-manifest/v1
+scope: repo
+scope_name: rocksdb
+plugins: []

@@ -1,0 +1,34 @@
+{
+  "schema_version": "installed-plugins/v1",
+  "run_id": "rocksdb-bootstrap-1780744419697-f6ca20",
+  "generated_at": "2026-06-06T11:13:39.720Z",
+  "status": "success",
+  "blocking_errors": [],
+  "warnings": [],
+  "repo": "rocksdb",
+  "engine": "taurus",
+  "plugins": [
+    {
+      "agentcentor_skill": "rocksdb-review",
+      "version": "3.0.10",
+      "old_version": null,
+      "new_version": "3.0.10",
+      "required_scope": "engine:taurus",
+      "installed_by": "session_start_bootstrap",
+      "status": "installed",
+      "stale_reason": null,
+      "managed_files": [
+        ".claude/plugins/rocksdb-review/.claude-plugin/plugin.json",
+        ".claude/plugins/rocksdb-review/activation.yml",
+        ".claude/plugins/rocksdb-review/install-entry.md",
+        ".claude/plugins/rocksdb-review/skills/rocksdb-review/SKILL.md"
+      ],
+      "validation": {
+        "contains_manifest": true,
+        "contains_skill": true,
+        "contains_activation_or_hook": true,
+        "install_entry_present": true
+      }
+    }
+  ]
+}

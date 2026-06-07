@@ -1,0 +1,43 @@
+{
+  "schema_version": "effective-required/v1",
+  "run_id": "rocksdb-bootstrap-1780744419697-f6ca20",
+  "generated_at": "2026-06-06T11:13:39.700Z",
+  "status": "success",
+  "blocking_errors": [],
+  "warnings": [],
+  "repo": "rocksdb",
+  "engine": "taurus",
+  "sources": [
+    {
+      "key": "department",
+      "source": "/home/cimon/code/skill-management-validation-repos/Mock-DBS-Skill/required/department.yml",
+      "cache_source": "fresh"
+    },
+    {
+      "key": "engine",
+      "source": "/home/cimon/code/skill-management-validation-repos/Mock-DBS-Skill/required/engine/taurus.yml",
+      "cache_source": "fresh"
+    },
+    {
+      "key": "repo",
+      "source": "/home/cimon/code/skill-management-validation-repos/Mock-DBS-Skill/required/repo/rocksdb.yml",
+      "cache_source": "fresh"
+    }
+  ],
+  "resolved_plugins": [
+    {
+      "agentcentor_skill": "rocksdb-review",
+      "version": "3.0.10",
+      "required_scope": "engine:taurus",
+      "resolved_from": [
+        "engine:taurus"
+      ],
+      "main_tag": "dev",
+      "status": "active",
+      "artifact_hash": "sha256:bc9735065d60fb2147b443efa96dc1cdd608f92c55fc6c9fa9973a22f3e132a6"
+    }
+  ],
+  "filtered_items": [],
+  "conflicts": [],
+  "cache_source": "fresh"
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "session-context/v1",
+  "run_id": "rocksdb-bootstrap-1780744419697-f6ca20",
+  "generated_at": "2026-06-06T11:13:39.720Z",
+  "status": "success",
+  "blocking_errors": [],
+  "warnings": [],
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "reloadSkills": false,
+    "additionalContext": "Effective required: 1 active dev plugin(s). Installed state: rocksdb-review:installed. Reports: .claude/skill-bootstrap/cache/effective_required.json, .claude/skill-bootstrap/reports/install_report.json, .claude/skill-bootstrap/state/installed-plugins.json."
+  },
+  "warnings_summary": []
+}
